@@ -47,6 +47,14 @@ hart0_init:
 	slli	a2,	a2, 16       //a2 = 0x82280000
 	load_data a0,a1,a2
 
+    li  a0, 0x204
+    slli a0, a0, 20
+    li  a1, 0xB00
+    slli a1, a1, 20
+    li  a2, 0xB04
+    slli a2, a2, 20
+    load_data a0, a1, a2
+
     li t1, 0x10000000
     li t2, 0x43
     sb t2, 0(t1)
@@ -67,7 +75,6 @@ wait_ready:
     lw t4, 0(t3)
     beqz t4, 1b
     fence rw, rw
-
 
 boot_opensbi:
 

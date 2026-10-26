@@ -107,6 +107,36 @@ test "$(stat -c%s "$DTB_BIN")" -le 524288
 test "$(stat -c%s "$OPENSBI_BIN")" -le 2097152
 
 
+# 编译 Trusted Domain 测试程序
+TRUSTED_DIR="$SHELL_FOLDER/../trusted_domain"
+
+mkdir -p "$TRUSTED_DIR/build"
+
+riscv64-unknown-elf-gcc \
+    -march=rv64imac_zicsr \
+    -mabi=lp64 \
+    -x assembler-with-cpp \
+    -c "$TRUSTED_DIR/startup.s" \
+    -o "$TRUSTED_DIR/build/startup.o"
+
+riscv64-unknown-elf-gcc \
+    -march=rv64imac_zicsr \
+    -mabi=lp64 \
+    -nostdlib \
+    -nostartfiles \
+    -static \
+    -Wl,--build-id=none \
+    -T "$TRUSTED_DIR/link.lds" \
+    "$TRUSTED_DIR/build/startup.o" \
+    -o "$TRUSTED_DIR/build/trusted_fw.elf"
+
+riscv64-unknown-elf-objcopy \
+    -O binary \
+    "$TRUSTED_DIR/build/trusted_fw.elf" \
+    "$TRUSTED_DIR/build/trusted_fw.bin"
+
+
+
 # ==========================================
 # 7. 合成 32 MiB Flash 镜像
 # ==========================================
@@ -136,6 +166,15 @@ dd if="$OPENSBI_BIN" \
     bs=1K seek=2048 \
     conv=notrunc status=none
 
+# 检查 Trusted 固件不超过预留的 4 MiB
+test "$(stat -c%s "$TRUSTED_DIR/build/trusted_fw.bin")" -le 4194304
+
+# 写入 Trusted Domain 固件
+# Flash 偏移：0x400000
+dd if="$TRUSTED_DIR/build/trusted_fw.bin" \
+    of=build/boot/flash.img \
+    bs=1K seek=4096 \
+    conv=notrunc status=none
 
 # ==========================================
 # 8. 编译完成

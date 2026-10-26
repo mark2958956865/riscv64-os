@@ -33,4 +33,6 @@ fi
     -D "$SHELL_FOLDER/qemu.log" \
     -display none \
     -serial stdio \
+    -serial null \
+    -serial file:"$SHELL_FOLDER/uart2.log" \
     -monitor none

@@ -122,7 +122,7 @@ static void quard_star_final_exit(void)
 
 static int quard_star_domains_init(void)
 {
-	return fdt_domains_populate(fdt_get_address());
+    return fdt_domains_populate(fdt_get_address());
 }
 
 static int quard_star_pmu_init(void)
