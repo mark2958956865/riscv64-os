@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+config PLATFORM_QUARD_STAR
+    bool
+    select FDT
+    select FDT_DOMAIN
+    select FDT_PMU
+
+    select FDT_SERIAL
+    select FDT_SERIAL_UART8250
+
+    select FDT_IPI
+    select FDT_IPI_MSWI
+
+    select FDT_TIMER
+    select FDT_TIMER_MTIMER
+
+    default y
