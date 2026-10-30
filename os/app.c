@@ -1,0 +1,80 @@
+#include "types.h"
+#include <stddef.h>
+#include "os.h"
+#include "context.h"
+#include "task.h"
+
+size_t syscall(size_t id, reg_t arg1, reg_t arg2, reg_t arg3) {
+    long ret;
+    asm volatile (
+        "mv a7, %1\n\t"   // Move syscall id to a7 register
+        "mv a0, %2\n\t"   // Move args[0] to a0 register
+        "mv a1, %3\n\t"   // Move args[1] to a1 register
+        "mv a2, %4\n\t"   // Move args[2] to a2 register
+        "ecall\n\t"       // Perform syscall
+        "mv %0, a0"       // Move return value to 'ret' variable
+        : "=r" (ret)
+        : "r" (id), "r" (arg1), "r" (arg2), "r" (arg3)
+        : "a7", "a0", "a1", "a2", "memory"
+    );
+    return ret;
+}
+
+size_t sys_write(size_t fd, const char* buf, size_t len)
+{
+    return syscall(__NR_write,(reg_t)fd,(reg_t)buf,(reg_t)len);
+}
+
+size_t sys_yield()
+{
+    return syscall(__NR_sched_yield,0,0,0);
+}
+
+void task_delay(volatile int count)
+{
+    count *= 50000;
+    while (count--);
+}
+
+void task1()
+{
+    const char *message = "task1 is running!\n";
+    int len = strlen(message);
+    while (1)
+    {
+        sys_write(1,message, len);
+        task_delay(10000);
+        sys_yield();
+    }
+}
+
+void task2()
+{
+    const char *message = "task2 is running!\n";
+    int len = strlen(message);
+    while (1)
+    {
+        sys_write(1,message, len);
+        task_delay(10000);
+        sys_yield();
+    }
+}
+
+void task3()
+{
+    const char *message = "task3 is running!\n";
+    int len = strlen(message);
+    while (1)
+    {
+        sys_write(1,message, len);
+        task_delay(10000);
+        sys_yield();
+    }
+}
+
+void task_init(void)
+{
+    task_create(task1);
+    task_create(task2);
+    task_create(task3);
+}
