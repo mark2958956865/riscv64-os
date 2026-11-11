@@ -11,6 +11,8 @@ SECTIONS
     .text : {
         KEEP(*(.text.entry))
         *(.text .text.*)
+        . = ALIGN(0X1000);
+        etext = .;
     } > ram
 
     .rodata : {
@@ -28,4 +30,8 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } > ram
+
+. = ALIGN(0x1000);
+kernelend = .;
+
 }
