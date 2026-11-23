@@ -33,6 +33,7 @@ struct sbiret {
 };
 
 void sbi_console_putchar(int ch);
+int sbi_console_getchar(void);
 
 void sbi_set_timer(uint64_t stime_value);
 

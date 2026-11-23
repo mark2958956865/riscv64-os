@@ -10,6 +10,8 @@
 #define PAGE_SIZE 0x1000        // 4kb  一页的大小
 #define PAGE_SIZE_BITS 0xc      // 12   页内偏移地址长度
 
+#define PGROUNDUP(sz) (((sz) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+
 #define PA_WIDTH_SV39 56        //物理地址长度
 #define VA_WIDTH_SV39 39        //虚拟地址长度
 #define PPN_WIDTH_SV39 (PA_WIDTH_SV39 - PAGE_SIZE_BITS)  // 物理页号 44位 [55:12]
@@ -32,6 +34,10 @@
 #define PTE_D (1 << 7)
 
 #define SATP_SV39 (8ULL << 60)
+
+#define TRAMPOLINE (1UL << 38) - PAGE_SIZE
+
+#define TRAPFRAME (TRAMPOLINE - PAGE_SIZE)
 
 #define MAKE_SATP(ppn) (SATP_SV39 | ((uint64_t)(ppn) & ((1ULL << 44) - 1)))
 
@@ -133,6 +139,9 @@ void StackFrameAllocator_dealloc(
     PhysPageNum ppn
 );
 
+PhysPageNum kalloc(void);
+void kfree(PhysPageNum ppn);
+
 void frame_allocator_test(void);
 
 PageTableEntry PageTableEntry_new(PhysPageNum ppn, uint8_t PTEFlags);
@@ -159,5 +168,27 @@ void frame_allocator_init(void);
 PageTable kvmmake(void);
 void kvminit(void);
 void kvminithart(void);
+int uvmcopy(PageTable *old_pt,
+            PageTable *new_pt,
+            uint64_t sz);
+
+
+/* 解除指定虚拟页范围的映射 */
+void uvmunmap(PageTable *pt,
+              VirtPageNum vpn,
+              uint64_t pages,
+              int do_free);
+
+/* 递归释放三级页表 */
+void freewalk(PhysPageNum ppn);
+
+/* 释放普通用户地址空间 */
+void uvmfree(PageTable *pt, uint64_t sz);
+
+/* 释放进程完整的用户页表 */
+void proc_freepagetable(
+    PageTable *pagetable,
+    uint64_t sz);
+
 
 #endif

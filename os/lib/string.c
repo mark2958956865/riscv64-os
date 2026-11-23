@@ -34,3 +34,13 @@ void *memset(void *dest, int ch, size_t count)
 
     return dest;
 }
+
+int strcmp(const char *str1, const char *str2)
+{
+    while (*str1 != '\0' && *str1 == *str2)
+    {
+        str1++;
+        str2++;
+    }
+    return (int)(unsigned char)*str1 - (int)(unsigned char)*str2;
+}

@@ -10,8 +10,13 @@ SECTIONS
 {
     .text : {
         KEEP(*(.text.entry))
+        . = ALIGN(0x1000);
+        trampoline = .;
+        KEEP(*(.text.trampoline))
+        . = ALIGN(0x1000);
+        _strampoline = .;
         *(.text .text.*)
-        . = ALIGN(0X1000);
+        . = ALIGN(0x1000);
         etext = .;
     } > ram
 

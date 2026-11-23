@@ -12,4 +12,6 @@ typedef unsigned long uint64_t;
  */ 
 typedef uint64_t reg_t;
 
+typedef __SIZE_TYPE__ size_t;
+
 #endif

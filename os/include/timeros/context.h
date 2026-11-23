@@ -39,6 +39,9 @@ typedef struct pt_regs {
     /* S模式下的寄存器 */
     reg_t sstatus;
     reg_t sepc;
+    reg_t kernel_satp;
+    reg_t kernel_sp;
+    reg_t trap_handler;
 }pt_regs,TrapContext;
 
 /* S模式的任务上下文 */

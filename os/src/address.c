@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <timeros/assert.h>
 #include "riscv.h"
+#include "task.h"
 
 /* 给定一个u64 转换为PhysAddr */
 PhysAddr phys_addr_from_size_t(uint64_t v) {
@@ -149,7 +150,7 @@ PhysPageNum StackFrameAllocator_alloc(
     PhysAddr addr = phys_addr_from_phys_page_num(ppn);
     // 清空整个物理页
     memset((void *)(uintptr_t)addr.value, 0, PAGE_SIZE);
-
+    // printk("phy addr: %p\n", (void *)(uintptr_t)addr.value);
     return ppn;
 }
 
@@ -185,6 +186,20 @@ void StackFrameAllocator_dealloc(
 
 static StackFrameAllocator FrameAllocatorImpl;
 extern char kernelend[];
+
+void kfree(PhysPageNum ppn)
+{
+    StackFrameAllocator_dealloc(
+        &FrameAllocatorImpl,
+        ppn
+    );
+}
+
+PhysPageNum kalloc(void)
+{
+    PhysPageNum frame = StackFrameAllocator_alloc(&FrameAllocatorImpl);
+    return frame;
+}
 
 void frame_allocator_init(void)
 {
@@ -457,8 +472,8 @@ void PageTable_unmap(PageTable *pt, VirtPageNum vpn)
     *pte = PageTableEntry_empty();
 }
 
-/* 内核代码段结束地址，由链接脚本定义 */
 extern char etext[];
+extern char trampoline[];
 /* 内核页表 */
 static PageTable kernel_pagetable;
 /* 创建内核页表 */
@@ -494,6 +509,16 @@ PageTable kvmmake(void)
         PTE_R | PTE_W
     );
     printk("Finish kernel data and RAM map!\n");
+    PageTable_map(
+        &pt,
+        virt_addr_from_size_t(TRAMPOLINE),
+        phys_addr_from_size_t((uintptr_t)trampoline),
+        PAGE_SIZE,
+        PTE_R | PTE_X
+    );
+    printf("Finish TRAMPOLINE Page map!\n");
+    proc_mapstacks(&pt);
+    printf("finish kernel stack map!\n");
     return pt;
 }
 
@@ -520,3 +545,155 @@ void kvminithart(void)
 
     printk("satp: %lx\n", (unsigned long)satp);
 }
+/*复制父进程用户地址空间
+ * old_pt：父进程页表
+ * new_pt：子进程页表
+ * sz：需要扫描的用户地址空间上界
+ * 当前阶段：直接复制物理页，不使用写时复制*/
+int uvmcopy(PageTable *old_pt, PageTable *new_pt, uint64_t sz)
+{
+    for (uint64_t va = 0; va < sz; va += PAGE_SIZE)
+    {
+        // 1. 查询父进程对应虚拟页
+        VirtPageNum vpn = floor_virts(virt_addr_from_size_t(va));
+        PageTableEntry *pte = find_pte(old_pt, vpn);
+        // 跳过未映射区域，例如 Guard Page
+        if (pte == NULL) {
+            continue;
+        }
+        if (!PageTableEntry_is_valid(pte)) {
+            continue;
+        }
+        // 2. 获取父进程页表项权限
+        uint64_t flags = PageTableEntry_flags(pte);
+        // 只复制用户页
+        if (!(flags & PTE_U)) {
+            continue;
+        }
+        // 3. 提取父进程物理页地址
+        uint64_t old_ppn = (pte->bits >> 10) & ((1ULL << 44) - 1);
+        uint64_t old_pa = old_ppn << 12;
+        // 4. 为子进程分配新的物理页
+        PhysPageNum new_ppn = kalloc();
+        if (new_ppn.value == 0) {
+            return -1;
+        }
+        PhysAddr new_pa = phys_addr_from_phys_page_num(new_ppn);
+        // 5. 复制一整个 4KB 物理页
+        memcpy((void *)(uintptr_t)new_pa.value, (const void *)(uintptr_t)old_pa, PAGE_SIZE);
+        // 6. 保留父进程用户页的权限
+        uint64_t map_perm = flags & (PTE_U | PTE_R | PTE_W | PTE_X);
+        // 7. 建立子进程虚拟地址映射
+        PageTable_map(new_pt, virt_addr_from_size_t(va), phys_addr_from_size_t(new_pa.value), PAGE_SIZE, map_perm);
+    }
+    return 0;
+}
+
+
+/* 解除虚拟地址映射
+ * pt：目标页表
+ * vpn：起始虚拟页号
+ * pages：需要解除映射的页数
+ * do_free：是否释放对应物理页 */
+void uvmunmap(PageTable *pt, VirtPageNum vpn, uint64_t pages, int do_free)
+{
+    for (uint64_t i = 0; i < pages; i++)
+    {
+        // 1. 计算当前虚拟页号
+        VirtPageNum current_vpn;
+        current_vpn.value = vpn.value + i;
+        // 2. 查询三级页表
+        PageTableEntry *pte = find_pte(pt, current_vpn);
+        // 未建立映射，直接跳过
+        if (pte == NULL) {
+            continue;
+        }
+        if (!PageTableEntry_is_valid(pte)) {
+            continue;
+        }
+        // 只能解除叶子页表项
+        if ((pte->bits & (PTE_R | PTE_W | PTE_X)) == 0) {
+            panic("uvmunmap: not a leaf");
+        }
+        // 3. 根据标志决定是否释放物理页
+        if (do_free)
+        {
+            PhysPageNum ppn = PageTableEntry_ppn(pte);
+            kfree(ppn);
+        }
+        // 4. 清空页表项，取消映射
+        *pte = PageTableEntry_empty();
+    }
+}
+
+/* 递归释放 Sv39 页表结构
+ * 调用前必须已经解除所有叶子映射 */
+void freewalk(PhysPageNum ppn)
+{
+    // 一张页表占用 4KB，包含 512 个页表项
+    for (int i = 0; i < 512; i++)
+    {
+        PageTableEntry *pte = &get_pte_array(ppn)[i];
+        // 跳过无效页表项
+        if (!(pte->bits & PTE_V)) {
+            continue;
+        }
+        // 非叶子页表项：有效但没有 R/W/X
+        if ((pte->bits & (PTE_R | PTE_W | PTE_X)) == 0)
+        {
+            // 获取下一级页表的物理页号
+            PhysPageNum child_ppn = PageTableEntry_ppn(pte);
+            // 递归释放下一级页表
+            freewalk(child_ppn);
+            // 清除当前页表项
+            *pte = PageTableEntry_empty();
+        }
+        else
+        {
+            // 仍然存在叶子映射，说明没有释放干净
+            panic("freewalk: leaf");
+        }
+    }
+    // 当前页表所有下级页表均已释放
+    kfree(ppn);
+}
+
+
+/* 释放用户地址空间
+ * pt：用户页表
+ * sz：用户地址空间上界 */
+void uvmfree(PageTable *pt, uint64_t sz)
+{
+    // 1. 释放 0 到 sz 范围内的用户物理页
+    if (sz > 0)
+    {
+        // 向上取整得到需要检查的页数
+        uint64_t pages = sz / PAGE_SIZE + (sz % PAGE_SIZE != 0);
+        VirtPageNum start_vpn;
+        start_vpn.value = 0;
+        // 解除用户映射，同时释放物理页
+        uvmunmap(pt, start_vpn, pages, 1);
+    }
+    // 2. 递归释放三级页表结构
+    freewalk(pt->root_ppn);
+    // 3. 清除已经失效的根页表号
+    pt->root_ppn.value = 0;
+}
+
+
+/* 释放进程的整个用户地址空间
+ * pagetable：进程用户页表
+ * sz：用户地址空间上界（base_size） */
+void proc_freepagetable(PageTable *pagetable, uint64_t sz)
+{
+    // 1. 解除 Trampoline 映射
+    // 所有进程共享该物理页，不能释放
+    uvmunmap(pagetable, floor_virts(virt_addr_from_size_t(TRAMPOLINE)), 1, 0);
+    // 2. 解除 TrapContext 映射
+    // 每个进程独立分配，需要释放
+    uvmunmap(pagetable, floor_virts(virt_addr_from_size_t(TRAPFRAME)), 1, 0);
+    // 3. 释放普通用户物理页与页表结构
+    uvmfree(pagetable, sz);
+}
+
+
